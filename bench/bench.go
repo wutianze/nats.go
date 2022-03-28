@@ -22,7 +22,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/nats-io/nats.go"
+	"github.com/wutianze/nats.go"
 	"github.com/nats-io/nuid"
 )
 
