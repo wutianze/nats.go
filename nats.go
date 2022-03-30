@@ -50,6 +50,10 @@ import (
 const (
 	Version                   = "1.13.0"
 	DefaultURL                = "nats://127.0.0.1:4222"
+	//--- interneuron
+	DefaultServerURL          = "nats://152.136.134.100:4222"
+	DefaultGuid               = "tmp_guid"
+	//---
 	DefaultPort               = 4222
 	DefaultMaxReconnect       = 60
 	DefaultReconnectWait      = 2 * time.Second
@@ -188,6 +192,26 @@ func GetDefaultOptions() Options {
 	}
 }
 
+//--- interneuron
+// GetDefaultInterneuronOptions returns default configuration options for the client.
+func IGetDefaultOptions() Options {
+	return Options{
+		AllowReconnect:     true,
+		MaxReconnect:       DefaultMaxReconnect,
+		ReconnectWait:      DefaultReconnectWait,
+		ReconnectJitter:    DefaultReconnectJitter,
+		ReconnectJitterTLS: DefaultReconnectJitterTLS,
+		Timeout:            DefaultTimeout,
+		PingInterval:       DefaultPingInterval,
+		MaxPingsOut:        DefaultMaxPingOut,
+		SubChanLen:         DefaultMaxChanLen,
+		ReconnectBufSize:   DefaultReconnectBufSize,
+		DrainTimeout:       DefaultDrainTimeout,
+		Guid:               DefaultGuid,
+	}
+}
+//---
+
 // DEPRECATED: Use GetDefaultOptions() instead.
 // DefaultOptions is not safe for use by multiple clients.
 // For details see #308.
@@ -299,6 +323,12 @@ type Options struct {
 	// that are sent on this connection if we also have matching subscriptions.
 	// Note this is supported on servers >= version 1.2. Proto 1 or greater.
 	NoEcho bool
+	
+	//-- interneuron
+	// Guid is an optional guid label which will be sent to the server
+	// on CONNECT to identify the client.
+	Guid string
+	//---
 
 	// Name is an optional name label which will be sent to the server
 	// on CONNECT to identify the client.
@@ -723,6 +753,9 @@ type connectInfo struct {
 	Pass         string `json:"pass,omitempty"`
 	Token        string `json:"auth_token,omitempty"`
 	TLS          bool   `json:"tls_required"`
+	//--- interneuron
+	Guid         string `json:"guid"`
+	//---
 	Name         string `json:"name"`
 	Lang         string `json:"lang"`
 	Version      string `json:"version"`
@@ -755,7 +788,75 @@ func Connect(url string, options ...Option) (*Conn, error) {
 	return opts.Connect()
 }
 
+
+//--- interneuron
+func IConnect(url string, options ...Option) (*Conn, error) {
+	if url == ""{
+		url = defaultServerUrl
+	}
+	return Connect(url,options)
+	
+}
+
+// IPublish publishes the data argument to the given subject. The data
+// argument is left untouched and needs to be correctly interpreted on
+// the receiver.
+func (nc *Conn)IPublish(subj string, data []byte)error{
+	return nc.publish(subj, _EMPTY_,nil,data)
+}
+
+// ISubscribe will express interest in the given subject. The subject
+// can have wildcards.
+// There are two type of wildcards: * for partial, and > for full.
+// A subscription on subject time.*.east would receive messages sent to time.us.east and time.eu.east.
+// A subscription on subject time.us.> would receive messages sent to
+// time.us.east and time.us.east.atlanta, while time.us.* would only match time.us.east
+// since it can't match more than one token.
+// Messages will be delivered to the associated MsgHandler.
+func (nc *Conn) ISubscribe(subj string, cb MsgHandler) (*Subscription, error) {
+	return nc.subscribe(subj, _EMPTY_, cb, nil, false, nil)
+}
+
+// IUnsubscribe will remove interest in the given subject.
+func (s *Subscription) IUnsubscribe() error {
+	s.Unsubscribe();
+}
+
+// IRequest will send a request payload and deliver the response message,
+// or an error, including a timeout if no message was received properly.
+func (nc *Conn) IRequest(subj string, data []byte, timeout time.Duration) (*Msg, error) {
+	return nc.request(subj, nil, data, timeout)
+}
+
+// IRespond allows a convenient way to respond to requests in service based subscriptions.
+func (m *Msg) IRespond(data []byte) error {
+	return m.Respond(data)
+}
+
+// IClose will close the connection to the server. This call will release
+// all blocking calls, such as Flush() and NextMsg()
+func (nc *Conn) IClose() {
+	return nc.Close()
+}
+
+// Flush will perform a round trip to the server and return when it
+// receives the internal reply.
+func (nc *Conn) IFlush() error {
+	return nc.FlushTimeout(10 * time.Second)
+}
+//---
+
 // Options that can be passed to Connect.
+
+//--- interneuron
+// Guid is an Option to set the client guid.
+func Guid(guid string) Option {
+	return func(o *Options) error {
+		o.Guid = guid
+		return nil
+	}
+}
+//---
 
 // Name is an Option to set the client name.
 func Name(name string) Option {
