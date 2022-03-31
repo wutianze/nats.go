@@ -11,14 +11,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nats_test
+package nats
 
 import (
 	"fmt"
 	"testing"
 	"time"
 
-	. "github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/encoders/protobuf"
 	"github.com/nats-io/nats.go/encoders/protobuf/testdata"
 )
