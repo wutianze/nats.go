@@ -822,10 +822,14 @@ func (s *Subscription) IUnsubscribe() error {
 	s.Unsubscribe();
 }
 
-// IRequest will send a request payload and deliver the response message,
+// IRequest will send a request payload and deliver the response bytes,
 // or an error, including a timeout if no message was received properly.
-func (nc *Conn) IRequest(subj string, data []byte, timeout time.Duration) (*Msg, error) {
-	return nc.request(subj, nil, data, timeout)
+func (nc *Conn) IRequest(subj string, data []byte, timeout time.Duration) ([]byte, error) {
+	msg, err := nc.request(subj, nil, data, timeout)
+	if err != nil {
+		return nil, err
+	}
+	return msg.Data, err
 }
 
 // IRespond allows a convenient way to respond to requests in service based subscriptions.
