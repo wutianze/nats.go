@@ -14,6 +14,15 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 [Coverage-Url]: https://coveralls.io/r/nats-io/nats.go?branch=main
 [Coverage-image]: https://coveralls.io/repos/github/nats-io/nats.go/badge.svg?branch=main
 
+# For gluenet users
+## Install
+go get github.com/wutianze/nats.go/
+
+## Basic use
+import "github.com/wutianze/nats.go"
+
+## See example_nats_test.go for an example
+
 ## Installation
 
 ```bash
