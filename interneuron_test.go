@@ -100,7 +100,7 @@ func TestResp(t *testing.T) {
 
 func TestFlush(t *testing.T) {
 	nc, _ := IConnect(ServerUrl)
-	defer nc.Close()
+	defer nc.IClose()
 
 	msg := &Msg{Subject: "foo", Reply: "bar", Data: []byte("Hello World!")}
 	for i := 0; i < 1000; i++ {
