@@ -71,26 +71,12 @@ func TestReq(t *testing.T) {
 	nc, _ := IConnect(ServerUrl)
 	defer nc.IClose()
 
-	/*
-		_, err := nc.ISubscribe(SubjectName, func(m *Msg) {
-			if err := nc.IPublish(m.Reply, []byte("I will reply\n")); err != nil {
-				log.Fatalf("IPublish failed: %v", err)
-				return
-			}
-		})
-		if err != nil {
-			log.Fatalf("ISubscribe failed: %v", err)
-			return
-		}
-
-	*/
-
 	data, err := nc.IRequest(SubjectName, []byte("reply\n"), 5*time.Second)
 	if err != nil {
 		log.Fatalf("IRequest failed: %v", err)
 		return
 	}
-	fmt.Printf("reply received: %s", string(data))
+	fmt.Printf("reply received: %s\n", string(data))
 }
 
 func TestResp(t *testing.T) {
@@ -100,7 +86,7 @@ func TestResp(t *testing.T) {
 	// Subscribe
 	for {
 		_, err := nc.ISubscribe(SubjectName, func(m *Msg) {
-			if err := m.Respond([]byte("received and reply! \n")); err != nil {
+			if err := m.IRespond([]byte("received and reply! \n")); err != nil {
 				return
 			}
 			fmt.Printf("request received: %v\n", string(m.Data))
@@ -123,7 +109,7 @@ func TestFlush(t *testing.T) {
 			return
 		}
 	}
-	err := nc.Flush()
+	err := nc.IFlush()
 	if err != nil {
 		log.Fatalf("IFlush failed: %s", err)
 		return
