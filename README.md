@@ -17,7 +17,7 @@ A [Go](http://golang.org) client for the [NATS messaging system](https://nats.io
 ---
 # For gluenet users
 ## Installation
-go get github.com/wutianze/nats.go/
+go get github.com/wutianze/nats.go@main
 
 ## Basic use
 import "github.com/wutianze/nats.go"
