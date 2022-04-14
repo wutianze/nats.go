@@ -1,6 +1,7 @@
 package nats
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"testing"
@@ -9,13 +10,7 @@ import (
 
 const ServerUrl = "nats://152.136.134.100:4222"
 const SubjectName = "subject1"
-
-func TestRPC(t *testing.T) {
-	// Client pub-sub
-	TestPubSub(t)
-	// Client req-res
-
-}
+const StreamName = "stream1"
 
 func TestPubSub(t *testing.T) {
 	go TestSub(t)
@@ -114,4 +109,141 @@ func TestFlush(t *testing.T) {
 		log.Fatalf("IFlush failed: %s", err)
 		return
 	}
+}
+
+// JetStream Usage Test
+
+func JetStreamInit(t *testing.T, url string) (*Conn, JetStreamContext) {
+	nc, err := IConnect(url)
+	if err != nil {
+		t.Fatalf("Unexpected error connecting: %v", err)
+	}
+	js, err := nc.IJetStream(MaxWait(10 * time.Second))
+	if err != nil {
+		t.Fatalf("Unexpected error getting JetStream context: %v", err)
+	}
+
+	return nc, js
+}
+
+func TestJSPublish(t *testing.T) {
+	nc, js := JetStreamInit(t, ServerUrl)
+	defer nc.IClose()
+
+	// Delete previous stream
+	// js.IDeleteStream(StreamName)
+
+	_, err := js.IAddStream(StreamName, SubjectName)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msg := []byte("Test publish" + time.Now().Format("2006-01-02 15:04:05"))
+	pa, err := js.IPublish(SubjectName, msg)
+	if err != nil {
+		t.Fatalf("Unexpected publish error: %v", err)
+	}
+	if err != nil {
+		t.Fatalf("stream lookup failed: %v", err)
+	}
+	if pa == nil || pa.Sequence != 1 || pa.Stream != StreamName {
+		t.Fatalf("Wrong stream sequence, expected 1, got %d", pa.Sequence)
+	}
+	stream, err := js.StreamInfo(StreamName)
+	if stream.State.Msgs != 1 {
+		t.Fatalf("Expected 1 messages, got %d", stream.State.Msgs)
+	}
+}
+
+func TestJSPublishLoadBalance(t *testing.T) {
+	nc, js := JetStreamInit(t, ServerUrl)
+	defer nc.IClose()
+
+	// Delete previous stream
+	js.IDeleteStream(StreamName)
+
+	_, err := js.IAddStreamOneConsumer(StreamName, SubjectName)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	msg := []byte("Test publish")
+	pa, err := js.IPublish(SubjectName, msg)
+	if err != nil {
+		t.Fatalf("Unexpected publish error: %v", err)
+	}
+	if pa == nil || pa.Sequence != 1 || pa.Stream != StreamName {
+		t.Fatalf("Wrong stream sequence, expected 1, got %d", pa.Sequence)
+	}
+	stream, err := js.StreamInfo(StreamName)
+	if stream.State.Msgs != 1 {
+		t.Fatalf("Expected 1 messages, got %d", stream.State.Msgs)
+	}
+	if err != nil {
+		t.Fatalf("stream lookup failed: %v", err)
+	}
+}
+
+func TestJsSubscribe(t *testing.T) {
+	nc, js := JetStreamInit(t, ServerUrl)
+	defer nc.IClose()
+
+	stream, err := js.StreamInfo(StreamName)
+	if stream.State.Msgs != 1 {
+		// t.Fatalf("Expected 1 messages, got %d", stream.State.Msgs)
+	}
+
+	sub, err := js.ISubscribe(SubjectName, func(m *Msg) {
+		fmt.Printf("Received a message: %s\n", string(m.Data))
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	time.Sleep(time.Second * 2)
+	defer sub.Unsubscribe()
+}
+
+func TestJSSubscribeLoadBalance(t *testing.T) {
+	nc, js := JetStreamInit(t, ServerUrl)
+	defer nc.IClose()
+
+	stream, err := js.StreamInfo(StreamName)
+	if stream.State.Msgs != 1 {
+		// t.Fatalf("Expected 1 messages, got %d", stream.State.Msgs)
+	}
+
+	sub, _ := js.ISubscribe(SubjectName, func(m *Msg) {
+		fmt.Printf("Received a message: %s\n", string(m.Data))
+	})
+
+	sub, err = js.ISubscribe(SubjectName, func(m *Msg) {
+		fmt.Printf("Received a message: %s\n", string(m.Data))
+	})
+	if err != errors.New("nats: maximum consumers limit reached") {
+		fmt.Printf("error maximum consumers limit reached occurs: %v\n", err)
+	}
+
+	time.Sleep(time.Second * 2)
+	defer sub.Unsubscribe()
+}
+
+func TestJsSubscribeLastMsg(t *testing.T) {
+	nc, js := JetStreamInit(t, ServerUrl)
+	defer nc.IClose()
+
+	stream, err := js.StreamInfo(StreamName)
+	if stream.State.Msgs != 1 {
+		// t.Fatalf("Expected 1 messages, got %d", stream.State.Msgs)
+	}
+
+	sub, err := js.ISubscribeLastMsg(SubjectName, func(m *Msg) {
+		fmt.Printf("Received a message: %s\n", string(m.Data))
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	time.Sleep(time.Second * 2)
+	defer sub.Unsubscribe()
 }

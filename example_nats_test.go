@@ -84,3 +84,9 @@ func ExampleSubscription_IUnsubscribe() {
 
 	sub.IUnsubscribe()
 }
+
+// the function below belongs to Nats JetStream that provides stream transmission,
+// load balance and QoS
+
+// the function below belongs to Nats JetStream that provides stream transmission,
+// load balance and QoS

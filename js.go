@@ -107,6 +107,7 @@ type JetStreamContext interface {
 	JetStreamManager
 	KeyValueManager
 	ObjectStoreManager
+	IJetStream
 }
 
 // Request API subjects for JetStream.
