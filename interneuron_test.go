@@ -247,3 +247,53 @@ func TestJsSubscribeLastMsg(t *testing.T) {
 	time.Sleep(time.Second * 2)
 	defer sub.Unsubscribe()
 }
+
+func TestPubSub_Packed(t *testing.T) {
+	c, err := InitNeuron("nats://152.136.134.100:4222")
+	defer c.CloseNeuron()
+
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	/*
+		c.js.DeleteStream("guid1")
+		_, err = c.js.AddStream(&StreamConfig{
+			Name:         "guid1",
+			Subjects:     []string{"guid1"},
+			MaxConsumers: 1,
+			Replicas:     1,
+		})
+		_, err = c.js.AddStream(&StreamConfig{
+			Name:         "guid1",
+			Subjects:     []string{"guid1"},
+			MaxConsumers: 1,
+			Replicas:     1,
+		})
+		if err != nil {
+			t.Fatalf("error: %v", err)
+			return
+		}
+	*/
+	pubMsg := time.Now().Format("2006-01-02 15:04:05")
+	err = c.Pub(pubMsg, &PubSubConfig{
+		Interneuron:    "guid1",
+		Mode:           Broadcast,
+		DeletePrevious: true,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	time.Sleep(time.Second * 4)
+
+	msg, err := c.Sub(&PubSubConfig{
+		Interneuron: "guid1",
+		Integrity:   ExactlyOnce,
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	fmt.Printf("received \"%v\"\n", msg)
+}
