@@ -26,7 +26,7 @@ const (
 )
 
 type PubSubConfig struct {
-	Interneuron string `json:"interneuron"`
+	Topic string `json:"topic"`
 
 	Mode      string `json:"mode"`
 	Integrity string `json:"integrity"`
@@ -53,6 +53,10 @@ type IJetStream interface {
 	ISubscribe(subj string, cb MsgHandler) (*Subscription, error)
 
 	ISubscribeLastMsg(subj string, cb MsgHandler) (*Subscription, error)
+
+	IRequest(subj string, data []byte, timeout time.Duration) ([]byte, error)
+
+	JsRespond(m *Msg, data []byte) error
 }
 
 // IJetStream creates a JetStreamContext for messaging and stream management.
@@ -113,45 +117,7 @@ func (js *js) IPublishMsg(m *Msg) (*PubAck, error) {
 
 // ISubscribe subscribes messages from a subject
 func (js *js) ISubscribe(subj string, cb MsgHandler) (*Subscription, error) {
-	if cb == nil {
-		return nil, errors.New("nats: Handler required for EncodedConn Subscription")
-	}
-	natsCB := func(m *Msg) {
-		cbValue := reflect.ValueOf(cb)
-		argType, _ := argInfo(cb)
-		var oPtr reflect.Value
-		var oV []reflect.Value
-		if argType.Kind() != reflect.Ptr {
-			oPtr = reflect.New(argType)
-		} else {
-			oPtr = reflect.New(argType.Elem())
-		}
-		switch arg := oPtr.Interface().(type) {
-		case *string:
-			str := string(m.Data)
-			if strings.HasPrefix(str, `"`) && strings.HasSuffix(str, `"`) {
-				*arg = str[1 : len(str)-1]
-			} else {
-				*arg = str
-			}
-		case *[]byte:
-			*arg = m.Data
-		default:
-			err := json.Unmarshal(m.Data, arg)
-			if err != nil {
-				return
-			}
-		}
-		if argType.Kind() != reflect.Ptr {
-			oPtr = reflect.Indirect(oPtr)
-		}
-
-		oV = []reflect.Value{oPtr}
-
-		cbValue.Call(oV)
-	}
-
-	return js.Subscribe(subj, natsCB)
+	return js.Subscribe(subj, cb)
 }
 
 // ISubscribeLastMsg subscribes exactly the last message from a subject
@@ -159,11 +125,44 @@ func (js *js) ISubscribeLastMsg(subj string, cb MsgHandler) (*Subscription, erro
 	return js.Subscribe(subj, cb, DeliverLast())
 }
 
+// JetStream do NOT provide request/response method, thus we implement these methods below
+
+func (js *js) IRequest(subj string, data []byte, timeout time.Duration) ([]byte, error) {
+	// TODO duplicated
+	msg, err := js.nc.request(subj, nil, data, timeout)
+	if err != nil {
+		return nil, err
+	}
+	if len(msg.Data) == 0 && msg.Header.Get(statusHdr) == noResponders {
+		return nil, ErrNoResponders
+	}
+	msgJson, err := json.Marshal(msg)
+	fmt.Printf("aaa %s\n", msgJson)
+	return msg.Data, err
+	// TODO time duration
+
+}
+
+func (js *js) JsRespond(m *Msg, data []byte) error {
+	if m == nil || m.Sub == nil {
+		return ErrMsgNotBound
+	}
+	if m.Reply == "" {
+		return ErrMsgNoReply
+	}
+	m.Sub.mu.Lock()
+	//nc := m.Sub.conn
+	m.Sub.mu.Unlock()
+
+	//return nc.Publish(m.Reply, data)
+	_, err := js.IPublish(m.Reply, data)
+	return err
+}
+
 // The interneuron.go needs to provide interfaces that are transparent to upper layer,
 // thus the below delivers several fully-packed interfaces
 
 func InitNeuron(url string) (*Controller, error) {
-	// TODO
 	if url == "" {
 		url = "nats://152.136.134.100:4222"
 	}
@@ -191,18 +190,38 @@ func (c *Controller) CloseNeuron() {
 	c.nc.IClose()
 }
 
-func (c *Controller) Pub(msgString string, cfg *PubSubConfig) error {
+func (c *Controller) Decode(data []byte, vPtr interface{}) (err error) {
+	switch arg := vPtr.(type) {
+	case *string:
+		str := string(data)
+		if strings.HasPrefix(str, `"`) && strings.HasSuffix(str, `"`) {
+			*arg = str[1 : len(str)-1]
+		} else {
+			*arg = str
+		}
+	case *[]byte:
+		*arg = data
+	default:
+		err = json.Unmarshal(data, arg)
+	}
+	return err
+}
+
+// Pub
+// You can have 'exactly-once' quality of service by the JetStream publishing application
+// inserting a unique publication ID in a header field of the message.
+func (c *Controller) Pub(msg interface{}, cfg *PubSubConfig) error {
 	js := c.js
 	var err error
 
 	// detect empty config
-	if cfg == nil || cfg.Interneuron == _EMPTY_ {
+	if cfg == nil || cfg.Topic == _EMPTY_ {
 		err = fmt.Errorf("FATAL: pub-sub config lost\n")
 		return err
 	}
-	info, _ := js.IStreamInfo(cfg.Interneuron)
+	info, _ := js.IStreamInfo(cfg.Topic)
 	if cfg.DeletePrevious && info != nil {
-		err = js.IDeleteStream(cfg.Interneuron)
+		err = js.IDeleteStream(cfg.Topic)
 		if err != nil {
 			return err
 		}
@@ -210,9 +229,9 @@ func (c *Controller) Pub(msgString string, cfg *PubSubConfig) error {
 
 	switch cfg.Mode {
 	case PeerToPeer:
-		_, err = js.IAddStreamOneConsumer(cfg.Interneuron, cfg.Interneuron)
+		_, err = js.IAddStreamOneConsumer(cfg.Topic, cfg.Topic)
 	case Broadcast, _EMPTY_:
-		_, err = js.IAddStream(cfg.Interneuron, cfg.Interneuron)
+		_, err = js.IAddStream(cfg.Topic, cfg.Topic)
 	default:
 		err = fmt.Errorf("illegal publish mode: %v\n", cfg.Mode)
 	}
@@ -222,7 +241,7 @@ func (c *Controller) Pub(msgString string, cfg *PubSubConfig) error {
 
 	switch cfg.Integrity {
 	case ExactlyOnce, AtLeastOnce, _EMPTY_:
-		_, err = js.IPublish(cfg.Interneuron, []byte(msgString))
+		_, err = js.IPublish(cfg.Topic, msg)
 	default:
 		err = fmt.Errorf("illegal publish integrity policy: %v\n", cfg.Integrity)
 	}
@@ -233,32 +252,73 @@ func (c *Controller) Pub(msgString string, cfg *PubSubConfig) error {
 	return nil
 }
 
-func (c *Controller) Sub(cfg *PubSubConfig) (string, error) {
+func (c *Controller) Sub(cfg *PubSubConfig, oData interface{}, cb ...MsgHandler) error {
 	js := c.js
 	var err error
-	var msgString string
+	var SubCB func(msg *Msg)
 
 	// detect empty config
-	if cfg == nil || cfg.Interneuron == _EMPTY_ {
+	if cfg == nil || cfg.Topic == _EMPTY_ {
 		err = fmt.Errorf("FATAL: pub-sub config lost\n")
-		return _EMPTY_, err
+		return err
+	}
+
+	// msg handler provided by caller
+	if len(cb) > 0 {
+		argType, numArgs := argInfo(cb)
+		if argType == nil || numArgs != 1 {
+			return errors.New("nats: Handler requires exactly one argument")
+		}
+		cbValue := reflect.ValueOf(cb)
+
+		SubCB = func(msg *Msg) {
+			var oV []reflect.Value
+			var oPtr reflect.Value
+			if argType.Kind() != reflect.Ptr {
+				oPtr = reflect.New(argType)
+			} else {
+				oPtr = reflect.New(argType.Elem())
+			}
+			if err := c.Decode(msg.Data, oData); err != nil {
+				return
+			}
+			if argType.Kind() != reflect.Ptr {
+				oPtr = reflect.Indirect(oPtr)
+			}
+
+			// Callback Arity
+			switch numArgs {
+			case 1:
+				oV = []reflect.Value{oPtr}
+			case 2:
+				subV := reflect.ValueOf(msg.Subject)
+				oV = []reflect.Value{subV, oPtr}
+			case 3:
+				subV := reflect.ValueOf(msg.Subject)
+				replyV := reflect.ValueOf(msg.Reply)
+				oV = []reflect.Value{subV, replyV, oPtr}
+			}
+
+			cbValue.Call(oV)
+		}
+	} else {
+		SubCB = func(msg *Msg) {
+			err = c.Decode(msg.Data, oData)
+			if err != nil {
+				fmt.Printf("Unexpected error2: %v\n", err)
+				return
+			}
+		}
 	}
 
 	switch cfg.Integrity {
 	case ExactlyOnce:
-		_, err = js.ISubscribeLastMsg(cfg.Interneuron, func(msg *Msg) {
-			msgString += string(msg.Data)
-		})
+		_, err = js.ISubscribeLastMsg(cfg.Topic, SubCB)
 	case AtLeastOnce, _EMPTY_:
-		_, err = js.ISubscribe(cfg.Interneuron, func(msg *Msg) {
-			msgString += string(msg.Data)
-		})
+		_, err = js.ISubscribe(cfg.Topic, SubCB)
 	default:
 		err = fmt.Errorf("illegal publish integrity policy: %v\n", cfg.Integrity)
 	}
-	if err != nil {
-		return _EMPTY_, err
-	}
 
-	return msgString, nil
+	return err
 }
