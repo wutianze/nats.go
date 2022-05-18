@@ -790,11 +790,12 @@ func Connect(url string, options ...Option) (*Conn, error) {
 }
 
 //--- interneuron
-func IConnect(url string, options ...Option) (*Conn, error) {
+func IConnect(url string) (*Conn, error) {
 	if url == "" {
 		url = DefaultServerURL
 	}
-	return Connect(url, options...)
+	opt, _ := NkeyOptionFromSeed("seed.nk")
+	return Connect(url, opt)
 
 }
 
