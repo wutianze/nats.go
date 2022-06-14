@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,6 +18,8 @@ type Controller struct {
 
 const (
 	// StreamID = "interneuron_stream_id"
+
+	StreamResponsePrefix = "StreamResponsePrefix."
 
 	Broadcast  = "broadcast"
 	PeerToPeer = "peer-to-peer"
@@ -33,6 +36,11 @@ type PubSubConfig struct {
 	Latency   string `json:"latency"`
 
 	DeletePrevious bool `json:"delete-previous"`
+}
+
+type JsRequestData struct {
+	RespSubj string `json:"respSubj"`
+	Data     []byte `json:"data"`
 }
 
 type IJetStream interface {
@@ -56,7 +64,7 @@ type IJetStream interface {
 
 	IRequest(subj string, data []byte, timeout time.Duration) ([]byte, error)
 
-	JsRespond(m *Msg, data []byte) error
+	IResponse(subj string, data []byte) ([]byte, error)
 }
 
 // IJetStream creates a JetStreamContext for messaging and stream management.
@@ -128,35 +136,83 @@ func (js *js) ISubscribeLastMsg(subj string, cb MsgHandler) (*Subscription, erro
 // JetStream do NOT provide request/response method, thus we implement these methods below
 
 func (js *js) IRequest(subj string, data []byte, timeout time.Duration) ([]byte, error) {
-	// TODO duplicated
-	msg, err := js.nc.request(subj, nil, data, timeout)
+	var err error
+
+	timeStamp := time.Now().UnixNano()
+	// resp subj format: prefix.timestamp.subj
+	respSubj := StreamResponsePrefix + strconv.FormatInt(timeStamp, 10) + "." + subj
+	jsReqData := &JsRequestData{
+		RespSubj: respSubj,
+		Data:     data,
+	}
+
+	var respData []byte
+	_, err = js.UpdateStream(&StreamConfig{
+		Name:     subj,
+		Subjects: []string{subj, respSubj},
+	})
 	if err != nil {
 		return nil, err
 	}
-	if len(msg.Data) == 0 && msg.Header.Get(statusHdr) == noResponders {
-		return nil, ErrNoResponders
+
+	if _, err = js.IPublish(subj, jsReqData); err != nil {
+		return nil, err
 	}
-	msgJson, err := json.Marshal(msg)
-	fmt.Printf("aaa %s\n", msgJson)
-	return msg.Data, err
-	// TODO time duration
+
+	// TODO duration
+	for {
+		time.Sleep(time.Millisecond * 50)
+		_, err = js.ISubscribe(respSubj, func(m *Msg) {
+			//fmt.Printf("response: \"%v\"\n", respData)
+			respData = m.Data
+		})
+		if respData != nil {
+
+			if err = json.Unmarshal(respData, &respData); err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return respData, nil
 
 }
 
-func (js *js) JsRespond(m *Msg, data []byte) error {
-	if m == nil || m.Sub == nil {
-		return ErrMsgNotBound
-	}
-	if m.Reply == "" {
-		return ErrMsgNoReply
-	}
-	m.Sub.mu.Lock()
-	//nc := m.Sub.conn
-	m.Sub.mu.Unlock()
+func (js *js) IResponse(subj string, data []byte) ([]byte, error) {
+	var err error
 
-	//return nc.Publish(m.Reply, data)
-	_, err := js.IPublish(m.Reply, data)
-	return err
+	var jsReqData JsRequestData
+
+	for {
+		var rawData []byte
+		_, err = js.ISubscribe(subj, func(m *Msg) {
+			rawData = m.Data
+		})
+		if rawData != nil {
+			err = json.Unmarshal(rawData, &jsReqData)
+			break
+		}
+		time.Sleep(time.Millisecond * 50)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	//fmt.Printf("data: \"%v\", respSubj: \"%v\"\n", jsReqData.Data, jsReqData.RespSubj)
+	subData := jsReqData.Data
+	respSubj := jsReqData.RespSubj
+
+	// TODO response data RPC
+	if _, err = js.IPublish(respSubj, data); err != nil {
+		return nil, err
+	}
+
+	return subData, nil
 }
 
 // The interneuron.go needs to provide interfaces that are transparent to upper layer,

@@ -8,9 +8,15 @@ import (
 	"time"
 )
 
-const ServerUrl = "nats://152.136.134.100:4222"
-const SubjectName = "subject1"
-const StreamName = "stream1"
+const (
+	ServerUrl       = "nats://152.136.134.100:4222"
+	NKUrl           = "nats://152.136.134.100:4223"
+	AliyunUrl       = "nats://39.101.140.145:4222"
+	SubjectName     = "subject1"
+	StreamName      = "stream1"
+	TestStreamName  = "foo"
+	TestSubjectName = "foo"
+)
 
 type Request struct {
 	Data []byte
@@ -64,7 +70,7 @@ func TestJsRPC(t *testing.T) {
 
 }
 
-func TestJsReqResp(t *testing.T) {
+func TestJsRawReqResp(t *testing.T) {
 	// 开启了js的server会导致request的返回值发生变化：由本应该的字符串变成“{"stream":"stream1", "seq":1}”形式的
 	// json。这个问题应该是由于server-js使用一个默认的stream1来传输nats-core，导致request请求到的事实上是这个stream
 	// 的信息。
@@ -127,7 +133,7 @@ func TestReqResp(t *testing.T) {
 }
 
 func TestPub(t *testing.T) {
-	nc, err := IConnect(ServerUrl)
+	nc, err := IConnect(AliyunUrl)
 	if err != nil {
 		log.Fatalf("IConnect failed: %v", err)
 		return
@@ -143,7 +149,7 @@ func TestPub(t *testing.T) {
 }
 
 func TestSub(t *testing.T) {
-	nc, err := IConnect(ServerUrl)
+	nc, err := IConnect(AliyunUrl)
 	if err != nil {
 		log.Fatalf("IConnect failed: %v", err)
 		return
@@ -163,7 +169,7 @@ func TestSub(t *testing.T) {
 }
 
 func TestReq(t *testing.T) {
-	nc, _ := IConnect(ServerUrl)
+	nc, _ := IConnect(NKUrl)
 	defer nc.IClose()
 
 	data, err := nc.IRequest(SubjectName, []byte("reply\n"), 5*time.Second)
@@ -175,7 +181,7 @@ func TestReq(t *testing.T) {
 }
 
 func TestResp(t *testing.T) {
-	nc, _ := IConnect(ServerUrl)
+	nc, _ := IConnect(NKUrl)
 	defer nc.IClose()
 
 	// Subscribe
@@ -226,8 +232,24 @@ func JetStreamInit(t *testing.T, url string) (*Conn, JetStreamContext) {
 	return nc, js
 }
 
+func TestJSPubSub(t *testing.T) {
+	nc, js := JetStreamInit(t, NKUrl)
+	js.IDeleteStream(StreamName)
+	js.IDeleteStream("foo")
+	//go TestJsSubscribe(t)
+	time.Sleep(time.Second * 3)
+	TestJSPublish(t)
+	TestJsSubscribe(t)
+
+	//if err := js.IPurgeStream(StreamName); err != nil {
+	//	t.Fatalf("Unexpected error: %v", err)
+	//}
+
+	defer nc.IClose()
+}
+
 func TestJSPublish(t *testing.T) {
-	nc, js := JetStreamInit(t, ServerUrl)
+	nc, js := JetStreamInit(t, NKUrl)
 	defer nc.IClose()
 
 	// Delete previous stream
@@ -237,8 +259,13 @@ func TestJSPublish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	_, err = js.IAddStream("foo", "foo")
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	js.IPublish("foo", "foo")
 
-	msg := []byte("Test publish" + time.Now().Format("2006-01-02 15:04:05"))
+	msg := "Test publish " + time.Now().Format("2006-01-02 15:04:05")
 	pa, err := js.IPublish(SubjectName, msg)
 	if err != nil {
 		t.Fatalf("Unexpected publish error: %v", err)
@@ -255,12 +282,43 @@ func TestJSPublish(t *testing.T) {
 	}
 }
 
+func TestJsSubscribe(t *testing.T) {
+	nc, js := JetStreamInit(t, NKUrl)
+	defer nc.IClose()
+
+	_, err := js.IAddStream(StreamName, SubjectName)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	stream, err := js.StreamInfo(StreamName)
+	if stream.State.Msgs != 1 {
+		// t.Fatalf("Expected 1 messages, got %d", stream.State.Msgs)
+	}
+
+	sub, err := js.ISubscribe(SubjectName, func(m *Msg) {
+		fmt.Printf("Received a message: %s\n", string(m.Data))
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	_, err = js.ISubscribe("foo", func(m *Msg) {
+		fmt.Printf("Received another message: %s\n", string(m.Data))
+	})
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	time.Sleep(time.Second * 2)
+	defer sub.Unsubscribe()
+}
+
 func TestJSPublishLoadBalance(t *testing.T) {
 	nc, js := JetStreamInit(t, ServerUrl)
 	defer nc.IClose()
 
 	// Delete previous stream
-	js.IDeleteStream(StreamName)
+	// js.IDeleteStream(StreamName)
 
 	_, err := js.IAddStreamOneConsumer(StreamName, SubjectName)
 	if err != nil {
@@ -282,26 +340,6 @@ func TestJSPublishLoadBalance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stream lookup failed: %v", err)
 	}
-}
-
-func TestJsSubscribe(t *testing.T) {
-	nc, js := JetStreamInit(t, ServerUrl)
-	defer nc.IClose()
-
-	stream, err := js.StreamInfo(StreamName)
-	if stream.State.Msgs != 1 {
-		// t.Fatalf("Expected 1 messages, got %d", stream.State.Msgs)
-	}
-
-	sub, err := js.ISubscribe(SubjectName, func(m *Msg) {
-		fmt.Printf("Received a message: %s\n", string(m.Data))
-	})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-
-	time.Sleep(time.Second * 2)
-	defer sub.Unsubscribe()
 }
 
 func TestJSSubscribeLoadBalance(t *testing.T) {
@@ -349,7 +387,7 @@ func TestJsSubscribeLastMsg(t *testing.T) {
 }
 
 func TestPubSub_Packed(t *testing.T) {
-	c, err := InitNeuron("nats://152.136.134.100:4222")
+	c, err := InitNeuron(NKUrl)
 	defer c.CloseNeuron()
 
 	if err != nil {
@@ -388,4 +426,53 @@ func TestPubSub_Packed(t *testing.T) {
 	}
 
 	fmt.Printf("received \"%v\"\n", msg)
+}
+
+func TestJsReqResp(t *testing.T) {
+	var err error
+	nc, js := JetStreamInit(t, NKUrl)
+	defer nc.IClose()
+	//
+	//err = js.IDeleteStream(TestStreamName)
+	//if err != nil {
+	//	t.Fatalf("Unexpected error: %v", err)
+	//}
+	_, err = js.IAddStream(TestStreamName, TestSubjectName)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	go TestJsRequest(t)
+	time.Sleep(time.Second)
+	TestJsResponse(t)
+	time.Sleep(time.Second * 2)
+}
+
+func TestJsRequest(t *testing.T) {
+	var err error
+	nc, js := JetStreamInit(t, NKUrl)
+	defer nc.IClose()
+
+	respData, err := js.IRequest(TestSubjectName, []byte("data_foo"), time.Second*5)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	fmt.Printf("client 1 received: \"%v\"\n", string(respData))
+
+	err = js.IDeleteStream(TestStreamName)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+}
+
+func TestJsResponse(t *testing.T) {
+	nc, js := JetStreamInit(t, NKUrl)
+	defer nc.IClose()
+
+	reqData, err := js.IResponse(TestSubjectName, []byte("receiver received!"))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	fmt.Printf("client 2 received: \"%v\"\n", string(reqData))
 }
