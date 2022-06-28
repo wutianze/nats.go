@@ -794,9 +794,9 @@ func IConnect(url string) (*Conn, error) {
 	if url == "" {
 		url = DefaultServerURL
 	}
-	opt, _ := NkeyOptionFromSeed("seed.nk")
-	return Connect(url, opt)
-
+	//opt, _ := NkeyOptionFromSeed("seed.nk")
+	//return Connect(url, opt)
+	return Connect(url)
 }
 
 // IPublish publishes the data argument to the given subject. The data
