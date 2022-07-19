@@ -803,6 +803,9 @@ func IConnect(url string) (*Conn, error) {
 // argument is left untouched and needs to be correctly interpreted on
 // the receiver.
 func (nc *Conn) IPublish(subj string, data []byte) error {
+	//timeStamp := time.Now().UnixNano() / 1e6
+	//data = []byte(strconv.FormatInt(timeStamp, 10) + "&" + string(data))
+	//println(string(data))
 	return nc.publish(subj, _EMPTY_, nil, data)
 }
 

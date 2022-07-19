@@ -43,6 +43,8 @@ type JsRequestData struct {
 	Data     []byte `json:"data"`
 }
 
+type RPC func(reqData []byte) []byte
+
 type IJetStream interface {
 	IStreamInfo(stream string) (*StreamInfo, error)
 
@@ -64,7 +66,7 @@ type IJetStream interface {
 
 	IRequest(subj string, data []byte, timeout time.Duration) ([]byte, error)
 
-	IResponse(subj string, data []byte) ([]byte, error)
+	IResponse(subj string, f RPC) ([]byte, error)
 }
 
 // IJetStream creates a JetStreamContext for messaging and stream management.
@@ -159,11 +161,11 @@ func (js *js) IRequest(subj string, data []byte, timeout time.Duration) ([]byte,
 		return nil, err
 	}
 
-	// TODO duration
+	t := globalTimerPool.Get(timeout)
+	defer globalTimerPool.Put(t)
 	for {
 		time.Sleep(time.Millisecond * 50)
 		_, err = js.ISubscribe(respSubj, func(m *Msg) {
-			//fmt.Printf("response: \"%v\"\n", respData)
 			respData = m.Data
 		})
 		if respData != nil {
@@ -173,6 +175,11 @@ func (js *js) IRequest(subj string, data []byte, timeout time.Duration) ([]byte,
 			}
 			break
 		}
+
+		select {
+		case <-t.C:
+			return nil, ErrTimeout
+		}
 	}
 
 	if err != nil {
@@ -180,15 +187,14 @@ func (js *js) IRequest(subj string, data []byte, timeout time.Duration) ([]byte,
 	}
 
 	return respData, nil
-
 }
 
-func (js *js) IResponse(subj string, data []byte) ([]byte, error) {
+func (js *js) IResponse(subj string, f RPC) ([]byte, error) {
 	var err error
-
 	var jsReqData JsRequestData
 
 	for {
+		// TODO duration
 		var rawData []byte
 		_, err = js.ISubscribe(subj, func(m *Msg) {
 			rawData = m.Data
@@ -203,16 +209,16 @@ func (js *js) IResponse(subj string, data []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	//fmt.Printf("data: \"%v\", respSubj: \"%v\"\n", jsReqData.Data, jsReqData.RespSubj)
-	subData := jsReqData.Data
+	//fmt.Printf("data: \"%v\", respSubj:  \"%v\"\n", jsReqData.Data, jsReqData.RespSubj)
+	reqData := jsReqData.Data
 	respSubj := jsReqData.RespSubj
 
-	// TODO response data RPC
-	if _, err = js.IPublish(respSubj, data); err != nil {
+	respData := f(reqData)
+	if _, err = js.IPublish(respSubj, respData); err != nil {
 		return nil, err
 	}
 
-	return subData, nil
+	return reqData, nil
 }
 
 // The interneuron.go needs to provide interfaces that are transparent to upper layer,

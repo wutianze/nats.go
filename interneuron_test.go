@@ -9,8 +9,8 @@ import (
 )
 
 const (
-	ServerUrl       = "nats://152.136.134.100:4222"
-	NKUrl           = "nats://152.136.134.100:4223"
+	ServerUrl       = "nats://129.226.101.5:4222"
+	NKUrl           = "nats://39.101.140.145:4223"
 	AliyunUrl       = "nats://39.101.140.145:4222"
 	SubjectName     = "subject1"
 	StreamName      = "stream1"
@@ -38,7 +38,7 @@ func test2(request Request, response *Response) int {
 	return 4
 }
 
-func TestJsRPC(t *testing.T) {
+func TestJsRawRPC(t *testing.T) {
 	nc, js := JetStreamInit(t, `nats://152.136.134.100:4222`)
 	defer nc.IClose()
 
@@ -133,7 +133,7 @@ func TestReqResp(t *testing.T) {
 }
 
 func TestPub(t *testing.T) {
-	nc, err := IConnect(AliyunUrl)
+	nc, err := IConnect(NKUrl)
 	if err != nil {
 		log.Fatalf("IConnect failed: %v", err)
 		return
@@ -149,7 +149,7 @@ func TestPub(t *testing.T) {
 }
 
 func TestSub(t *testing.T) {
-	nc, err := IConnect(AliyunUrl)
+	nc, err := IConnect(NKUrl)
 	if err != nil {
 		log.Fatalf("IConnect failed: %v", err)
 		return
@@ -469,10 +469,49 @@ func TestJsResponse(t *testing.T) {
 	nc, js := JetStreamInit(t, NKUrl)
 	defer nc.IClose()
 
-	reqData, err := js.IResponse(TestSubjectName, []byte("receiver received!"))
+	reqData, err := js.IResponse(TestSubjectName, func(data []byte) []byte {
+		return []byte("receiver received!")
+	})
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
 
 	fmt.Printf("client 2 received: \"%v\"\n", string(reqData))
+}
+
+func TestJsRPC(t *testing.T) {
+	var err error
+	nc, js := JetStreamInit(t, NKUrl)
+	defer nc.IClose()
+
+	_, err = js.IAddStream(TestStreamName, TestSubjectName)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+
+	runReq := func() {
+		req, err := js.IRequest(TestSubjectName, []byte("func1"), time.Second*3)
+		if err != nil {
+			t.Fatalf("Unexpected error: %v", err)
+		}
+		fmt.Printf("client REQ received: \"%v\"\n", string(req))
+	}
+
+	go runReq()
+
+	f := func(data []byte) []byte {
+		timeNow := time.Now().Format("2006-01-02 15:04:05")
+		dataString := string(data) + ": " + timeNow
+		return []byte(dataString)
+	}
+
+	resp, err := js.IResponse(TestSubjectName, f)
+	fmt.Printf("client RESP received: \"%v\"\n", string(resp))
+
+	time.Sleep(time.Second * 2)
+
+	err = js.IDeleteStream(TestStreamName)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
 }
